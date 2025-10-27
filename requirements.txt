@@ -1,0 +1,24 @@
+# Lantern ZK 承诺验证系统依赖
+
+# 核心依赖
+# 注意：SageMath 需要单独安装，请访问 https://www.sagemath.org/download.html
+
+# Python 标准库依赖（无需额外安装）
+# - json
+# - dataclasses
+# - typing
+# - random
+# - time
+# - itertools
+
+# 可选依赖（用于开发和测试）
+numpy>=1.21.0
+
+# SageMath 包内置依赖
+# sage.all
+# sage.stats.distributions.discrete_gaussian_polynomial
+
+# 运行环境说明：
+# 1. 安装 SageMath (建议版本 >= 9.5)
+# 2. 使用 `sage -python` 或配置 Sage 内核运行脚本
+# 3. 或者在 Jupyter notebook 中选择 SageMath 内核

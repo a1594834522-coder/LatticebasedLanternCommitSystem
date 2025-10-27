@@ -1,0 +1,9 @@
+{
+  "rules": [
+    {
+      "id": "sum2",
+      "type": "sum_equals",
+      "value": 2
+    }
+  ]
+}

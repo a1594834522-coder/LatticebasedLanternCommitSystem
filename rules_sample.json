@@ -1,0 +1,14 @@
+{
+  "rules": [
+    {
+      "id": "sum1",
+      "type": "sum_equals",
+      "value": 1
+    },
+    {
+      "id": "no_c",
+      "type": "coordinate_zero",
+      "index": 2
+    }
+  ]
+}
