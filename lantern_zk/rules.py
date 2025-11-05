@@ -15,7 +15,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 
 # =============================================================================
@@ -135,28 +135,124 @@ class Rule:
         """
         rule_type = self.rule_type
 
-        # 不同规则类型的必需参数
-        if rule_type == RuleType.SUM_EQUALS:
-            if "value" not in self.params:
-                raise ValueError(f"Rule {self.rule_id}: 'sum_equals' requires 'value' parameter")
+        # 必需参数检查表
+        required_parameters: Dict[RuleType, Tuple[str, ...]] = {
+            RuleType.SUM_EQUALS: ("value",),
+            RuleType.WEIGHTED_SUM: ("weights", "target"),
+            RuleType.LINEAR_COMBINATION: ("target",),
+            RuleType.COORDINATE_ZERO: ("index",),
+            RuleType.COORDINATE_EQUALS: ("index", "value"),
+            RuleType.COORDINATE_IN_RANGE: ("index", "min", "max"),
+            RuleType.COORDINATE_BINARY: ("index",),
+            RuleType.L1_NORM_BOUND: ("bound",),
+            RuleType.L2_NORM_BOUND: ("bound",),
+            RuleType.LINF_NORM_BOUND: ("bound",),
+            RuleType.ALL_IN_RANGE: ("min", "max"),
+            RuleType.ALL_BINARY: tuple(),
+            RuleType.ALL_NON_NEGATIVE: tuple(),
+            RuleType.INNER_PRODUCT: ("vector", "target"),
+            RuleType.HADAMARD_PRODUCT: ("other", "target"),
+        }
 
-        elif rule_type == RuleType.WEIGHTED_SUM:
-            if "weights" not in self.params or "target" not in self.params:
-                raise ValueError(f"Rule {self.rule_id}: 'weighted_sum' requires 'weights' and 'target'")
+        missing = [
+            name
+            for name in required_parameters.get(rule_type, tuple())
+            if name not in self.params
+        ]
+        if missing:
+            raise ValueError(
+                f"Rule {self.rule_id}: missing required parameter(s) {missing} for type '{rule_type.value}'"
+            )
 
-        elif rule_type == RuleType.COORDINATE_ZERO:
-            if "index" not in self.params:
-                raise ValueError(f"Rule {self.rule_id}: 'coordinate_zero' requires 'index'")
+        # 额外的语义检查
+        if rule_type in (
+            RuleType.COORDINATE_ZERO,
+            RuleType.COORDINATE_EQUALS,
+            RuleType.COORDINATE_IN_RANGE,
+            RuleType.COORDINATE_BINARY,
+        ):
+            index = self.params.get("index")
+            if not isinstance(index, int) or index < 0:
+                raise ValueError(
+                    f"Rule {self.rule_id}: 'index' must be a non-negative integer"
+                )
 
-        elif rule_type == RuleType.COORDINATE_EQUALS:
-            if "index" not in self.params or "value" not in self.params:
-                raise ValueError(f"Rule {self.rule_id}: 'coordinate_equals' requires 'index' and 'value'")
+        if rule_type == RuleType.COORDINATE_IN_RANGE:
+            minimum = self.params["min"]
+            maximum = self.params["max"]
+            if minimum > maximum:
+                raise ValueError(
+                    f"Rule {self.rule_id}: 'min' cannot be greater than 'max'"
+                )
 
-        elif rule_type in [RuleType.L1_NORM_BOUND, RuleType.L2_NORM_BOUND, RuleType.LINF_NORM_BOUND]:
-            if "bound" not in self.params:
-                raise ValueError(f"Rule {self.rule_id}: norm rules require 'bound' parameter")
+        if rule_type == RuleType.WEIGHTED_SUM:
+            weights = self.params["weights"]
+            if not isinstance(weights, (list, tuple)) or not weights:
+                raise ValueError(
+                    f"Rule {self.rule_id}: 'weights' must be a non-empty list or tuple"
+                )
 
-        # 更多验证可以在这里添加
+        if rule_type == RuleType.LINEAR_COMBINATION:
+            has_coefficients = "coefficients" in self.params
+            has_matrix = "matrix" in self.params
+            if not has_coefficients and not has_matrix:
+                raise ValueError(
+                    f"Rule {self.rule_id}: 'linear_combination' requires 'coefficients' or 'matrix'"
+                )
+            if has_coefficients:
+                coefficients = self.params["coefficients"]
+                if not isinstance(coefficients, (list, tuple)) or not coefficients:
+                    raise ValueError(
+                        f"Rule {self.rule_id}: 'coefficients' must be a non-empty list or tuple"
+                    )
+
+        if rule_type in (
+            RuleType.L1_NORM_BOUND,
+            RuleType.L2_NORM_BOUND,
+            RuleType.LINF_NORM_BOUND,
+        ):
+            bound = self.params["bound"]
+            if not isinstance(bound, (int, float)) or bound <= 0:
+                raise ValueError(
+                    f"Rule {self.rule_id}: 'bound' must be a positive number"
+                )
+
+        if rule_type in (RuleType.ALL_IN_RANGE,):
+            minimum = self.params["min"]
+            maximum = self.params["max"]
+            if minimum > maximum:
+                raise ValueError(
+                    f"Rule {self.rule_id}: 'min' cannot be greater than 'max'"
+                )
+
+        if rule_type == RuleType.INNER_PRODUCT:
+            vector = self.params["vector"]
+            if not isinstance(vector, (list, tuple)) or not vector:
+                raise ValueError(
+                    f"Rule {self.rule_id}: 'vector' must be a non-empty list or tuple"
+                )
+
+        if rule_type == RuleType.HADAMARD_PRODUCT:
+            other = self.params["other"]
+            target = self.params["target"]
+            if not isinstance(other, (list, tuple)) or not other:
+                raise ValueError(
+                    f"Rule {self.rule_id}: 'other' must be a non-empty list or tuple"
+                )
+            if not isinstance(target, (list, tuple)) or len(target) != len(other):
+                raise ValueError(
+                    f"Rule {self.rule_id}: 'target' must be the same length as 'other'"
+                )
+
+        if rule_type in (RuleType.ALL_BINARY, RuleType.COORDINATE_BINARY):
+            allowed_values = self.params.get("values")
+            if allowed_values is not None:
+                if not isinstance(allowed_values, (list, tuple)) or not all(
+                    v in (0, 1) for v in allowed_values
+                ):
+                    raise ValueError(
+                        f"Rule {self.rule_id}: 'values' must contain only 0/1 entries"
+                    )
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> Rule:
@@ -190,7 +286,7 @@ class Rule:
         params = dict(data.get("params", {}))
 
         # 兼容顶层便捷键
-        for key in ["value", "index", "target", "bound", "min", "max"]:
+        for key in ["value", "index", "target", "bound", "min", "max", "vector", "other"]:
             if key in data and key not in params:
                 params[key] = data[key]
 
@@ -199,6 +295,10 @@ class Rule:
             params["indices"] = data["indices"]
         if "weights" in data:
             params["weights"] = data["weights"]
+        if "coefficients" in data:
+            params["coefficients"] = data["coefficients"]
+        if "matrix" in data:
+            params["matrix"] = data["matrix"]
 
         # 提取描述
         description = data.get("description")

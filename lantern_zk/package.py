@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -262,12 +263,417 @@ class CoordinateEqualsProofGenerator(RuleProofGenerator):
         )
 
 
+class WeightedSumProofGenerator(RuleProofGenerator):
+    """weighted_sum 规则的证明生成器"""
+
+    def generate(self, vector: Sequence[int], rule: Rule, commitment: RLWECommitment) -> ProofResult:
+        weights = rule.params.get("weights")
+        target = rule.params.get("target")
+
+        if weights is None or target is None:
+            return ProofResult(
+                status=ProofStatus.ERROR,
+                proof_type=ProofType.ABDLOP_LINEAR,
+                error_message="weights and target are required for weighted_sum",
+            )
+
+        if not isinstance(weights, (list, tuple)):
+            return ProofResult(
+                status=ProofStatus.ERROR,
+                proof_type=ProofType.ABDLOP_LINEAR,
+                error_message="weights must be a list or tuple",
+            )
+
+        if len(weights) != len(vector):
+            return ProofResult(
+                status=ProofStatus.ERROR,
+                proof_type=ProofType.ABDLOP_LINEAR,
+                error_message=f"weights length {len(weights)} does not match vector length {len(vector)}",
+            )
+
+        actual = sum(float(w) * float(v) for w, v in zip(weights, vector))
+        target_value = float(target)
+
+        if not math.isclose(actual, target_value, rel_tol=TOLERANCE, abs_tol=TOLERANCE):
+            return ProofResult(
+                status=ProofStatus.VERIFICATION_FAILED,
+                proof_type=ProofType.ABDLOP_LINEAR,
+                error_message=f"Weighted sum {actual} does not equal target {target_value}",
+                metadata={
+                    "difference": actual - target_value,
+                    "tolerance": TOLERANCE,
+                },
+            )
+
+        return ProofResult(
+            status=ProofStatus.SUCCESS,
+            proof_type=ProofType.ABDLOP_LINEAR,
+            proof_data={
+                "rule_type": "weighted_sum",
+                "target": target_value,
+                "evaluated_sum": actual,
+                "verified": True,
+            },
+            metadata={"tolerance": TOLERANCE},
+        )
+
+
+class CoordinateInRangeProofGenerator(RuleProofGenerator):
+    """coordinate_in_range 规则的证明生成器"""
+
+    def generate(self, vector: Sequence[int], rule: Rule, commitment: RLWECommitment) -> ProofResult:
+        index = rule.params.get("index")
+        minimum = rule.params.get("min")
+        maximum = rule.params.get("max")
+
+        if index is None or index < 0 or index >= len(vector):
+            return ProofResult(
+                status=ProofStatus.ERROR,
+                proof_type=ProofType.COMPOSITE,
+                error_message=f"Invalid index: {index}",
+            )
+
+        if minimum is None or maximum is None:
+            return ProofResult(
+                status=ProofStatus.ERROR,
+                proof_type=ProofType.COMPOSITE,
+                error_message="min and max are required for coordinate_in_range",
+            )
+
+        value = vector[index]
+        if value < minimum or value > maximum:
+            return ProofResult(
+                status=ProofStatus.VERIFICATION_FAILED,
+                proof_type=ProofType.COMPOSITE,
+                error_message=f"Coordinate {index}={value} outside range [{minimum}, {maximum}]",
+            )
+
+        return ProofResult(
+            status=ProofStatus.SUCCESS,
+            proof_type=ProofType.COMPOSITE,
+            proof_data={
+                "rule_type": "coordinate_in_range",
+                "index": index,
+                "value": value,
+                "range": [minimum, maximum],
+                "verified": True,
+            },
+        )
+
+
+class CoordinateBinaryProofGenerator(RuleProofGenerator):
+    """coordinate_binary 规则的证明生成器"""
+
+    def generate(self, vector: Sequence[int], rule: Rule, commitment: RLWECommitment) -> ProofResult:
+        index = rule.params.get("index")
+        allowed_values = rule.params.get("values")
+
+        if index is None or index < 0 or index >= len(vector):
+            return ProofResult(
+                status=ProofStatus.ERROR,
+                proof_type=ProofType.COMPOSITE,
+                error_message=f"Invalid index: {index}",
+            )
+
+        if allowed_values is None:
+            allowed_set = {0, 1}
+        else:
+            if not isinstance(allowed_values, (list, tuple)) or not allowed_values:
+                return ProofResult(
+                    status=ProofStatus.ERROR,
+                    proof_type=ProofType.COMPOSITE,
+                    error_message="values must be a non-empty list or tuple when provided",
+                )
+            allowed_set = set(allowed_values)
+
+        value = vector[index]
+        if value not in allowed_set:
+            return ProofResult(
+                status=ProofStatus.VERIFICATION_FAILED,
+                proof_type=ProofType.COMPOSITE,
+                error_message=f"Coordinate {index}={value} not in allowed set {sorted(allowed_set)}",
+            )
+
+        return ProofResult(
+            status=ProofStatus.SUCCESS,
+            proof_type=ProofType.COMPOSITE,
+            proof_data={
+                "rule_type": "coordinate_binary",
+                "index": index,
+                "value": value,
+                "allowed": sorted(allowed_set),
+                "verified": True,
+            },
+        )
+
+
+class AllInRangeProofGenerator(RuleProofGenerator):
+    """all_in_range 规则的证明生成器"""
+
+    def generate(self, vector: Sequence[int], rule: Rule, commitment: RLWECommitment) -> ProofResult:
+        minimum = rule.params.get("min")
+        maximum = rule.params.get("max")
+
+        if minimum is None or maximum is None:
+            return ProofResult(
+                status=ProofStatus.ERROR,
+                proof_type=ProofType.COMPOSITE,
+                error_message="min and max are required for all_in_range",
+            )
+
+        violations = [
+            {"index": idx, "value": value}
+            for idx, value in enumerate(vector)
+            if value < minimum or value > maximum
+        ]
+        if violations:
+            return ProofResult(
+                status=ProofStatus.VERIFICATION_FAILED,
+                proof_type=ProofType.COMPOSITE,
+                error_message="Vector contains values outside allowed range",
+                metadata={"violations": violations},
+            )
+
+        return ProofResult(
+            status=ProofStatus.SUCCESS,
+            proof_type=ProofType.COMPOSITE,
+            proof_data={
+                "rule_type": "all_in_range",
+                "range": [minimum, maximum],
+                "verified": True,
+            },
+        )
+
+
+class AllBinaryProofGenerator(RuleProofGenerator):
+    """all_binary 规则的证明生成器"""
+
+    def generate(self, vector: Sequence[int], rule: Rule, commitment: RLWECommitment) -> ProofResult:
+        allowed_values = rule.params.get("values")
+        if allowed_values is None:
+            allowed_set = {0, 1}
+        else:
+            if not isinstance(allowed_values, (list, tuple)) or not allowed_values:
+                return ProofResult(
+                    status=ProofStatus.ERROR,
+                    proof_type=ProofType.COMPOSITE,
+                    error_message="values must be a non-empty list or tuple when provided",
+                )
+            allowed_set = set(allowed_values)
+
+        invalid = [
+            {"index": idx, "value": value}
+            for idx, value in enumerate(vector)
+            if value not in allowed_set
+        ]
+        if invalid:
+            return ProofResult(
+                status=ProofStatus.VERIFICATION_FAILED,
+                proof_type=ProofType.COMPOSITE,
+                error_message="Vector contains values outside allowed binary set",
+                metadata={"violations": invalid, "allowed": sorted(allowed_set)},
+            )
+
+        return ProofResult(
+            status=ProofStatus.SUCCESS,
+            proof_type=ProofType.COMPOSITE,
+            proof_data={
+                "rule_type": "all_binary",
+                "allowed": sorted(allowed_set),
+                "verified": True,
+            },
+        )
+
+
+class AllNonNegativeProofGenerator(RuleProofGenerator):
+    """all_non_negative 规则的证明生成器"""
+
+    def generate(self, vector: Sequence[int], rule: Rule, commitment: RLWECommitment) -> ProofResult:
+        negatives = [
+            {"index": idx, "value": value}
+            for idx, value in enumerate(vector)
+            if value < 0
+        ]
+        if negatives:
+            return ProofResult(
+                status=ProofStatus.VERIFICATION_FAILED,
+                proof_type=ProofType.COMPOSITE,
+                error_message="Vector contains negative entries",
+                metadata={"violations": negatives},
+            )
+
+        return ProofResult(
+            status=ProofStatus.SUCCESS,
+            proof_type=ProofType.COMPOSITE,
+            proof_data={
+                "rule_type": "all_non_negative",
+                "verified": True,
+            },
+        )
+
+
+class InnerProductProofGenerator(RuleProofGenerator):
+    """inner_product 规则的证明生成器"""
+
+    def generate(self, vector: Sequence[int], rule: Rule, commitment: RLWECommitment) -> ProofResult:
+        other = rule.params.get("vector")
+        target = rule.params.get("target")
+
+        if other is None or target is None:
+            return ProofResult(
+                status=ProofStatus.ERROR,
+                proof_type=ProofType.ABDLOP_QUADRATIC,
+                error_message="vector and target are required for inner_product",
+            )
+
+        if not isinstance(other, (list, tuple)) or len(other) != len(vector):
+            return ProofResult(
+                status=ProofStatus.ERROR,
+                proof_type=ProofType.ABDLOP_QUADRATIC,
+                error_message="inner_product vector must match length of input vector",
+            )
+
+        actual = sum(float(a) * float(b) for a, b in zip(vector, other))
+        target_value = float(target)
+
+        if not math.isclose(actual, target_value, rel_tol=TOLERANCE, abs_tol=TOLERANCE):
+            return ProofResult(
+                status=ProofStatus.VERIFICATION_FAILED,
+                proof_type=ProofType.ABDLOP_QUADRATIC,
+                error_message=f"Inner product {actual} does not equal target {target_value}",
+                metadata={
+                    "difference": actual - target_value,
+                    "tolerance": TOLERANCE,
+                },
+            )
+
+        return ProofResult(
+            status=ProofStatus.SUCCESS,
+            proof_type=ProofType.ABDLOP_QUADRATIC,
+            proof_data={
+                "rule_type": "inner_product",
+                "target": target_value,
+                "evaluated_inner_product": actual,
+                "verified": True,
+            },
+            metadata={"tolerance": TOLERANCE},
+        )
+
+
+class L1NormBoundProofGenerator(RuleProofGenerator):
+    """l1_norm_bound 规则的证明生成器"""
+
+    def generate(self, vector: Sequence[int], rule: Rule, commitment: RLWECommitment) -> ProofResult:
+        bound = rule.params.get("bound")
+        if bound is None:
+            return ProofResult(
+                status=ProofStatus.ERROR,
+                proof_type=ProofType.COMPOSITE,
+                error_message="bound is required for l1_norm_bound",
+            )
+
+        norm = sum(abs(value) for value in vector)
+        if norm > float(bound) + TOLERANCE:
+            return ProofResult(
+                status=ProofStatus.VERIFICATION_FAILED,
+                proof_type=ProofType.COMPOSITE,
+                error_message=f"L1 norm {norm} exceeds bound {bound}",
+            )
+
+        return ProofResult(
+            status=ProofStatus.SUCCESS,
+            proof_type=ProofType.COMPOSITE,
+            proof_data={
+                "rule_type": "l1_norm_bound",
+                "bound": bound,
+                "norm": norm,
+                "verified": True,
+            },
+            metadata={"tolerance": TOLERANCE},
+        )
+
+
+class L2NormBoundProofGenerator(RuleProofGenerator):
+    """l2_norm_bound 规则的证明生成器"""
+
+    def generate(self, vector: Sequence[int], rule: Rule, commitment: RLWECommitment) -> ProofResult:
+        bound = rule.params.get("bound")
+        if bound is None:
+            return ProofResult(
+                status=ProofStatus.ERROR,
+                proof_type=ProofType.COMPOSITE,
+                error_message="bound is required for l2_norm_bound",
+            )
+
+        norm = math.sqrt(sum(float(value) ** 2 for value in vector))
+        if norm > float(bound) + TOLERANCE:
+            return ProofResult(
+                status=ProofStatus.VERIFICATION_FAILED,
+                proof_type=ProofType.COMPOSITE,
+                error_message=f"L2 norm {norm} exceeds bound {bound}",
+            )
+
+        return ProofResult(
+            status=ProofStatus.SUCCESS,
+            proof_type=ProofType.COMPOSITE,
+            proof_data={
+                "rule_type": "l2_norm_bound",
+                "bound": bound,
+                "norm": norm,
+                "verified": True,
+            },
+            metadata={"tolerance": TOLERANCE},
+        )
+
+
+class LinfNormBoundProofGenerator(RuleProofGenerator):
+    """linf_norm_bound 规则的证明生成器"""
+
+    def generate(self, vector: Sequence[int], rule: Rule, commitment: RLWECommitment) -> ProofResult:
+        bound = rule.params.get("bound")
+        if bound is None:
+            return ProofResult(
+                status=ProofStatus.ERROR,
+                proof_type=ProofType.COMPOSITE,
+                error_message="bound is required for linf_norm_bound",
+            )
+
+        norm = max(abs(value) for value in vector) if vector else 0
+        if norm > float(bound) + TOLERANCE:
+            return ProofResult(
+                status=ProofStatus.VERIFICATION_FAILED,
+                proof_type=ProofType.COMPOSITE,
+                error_message=f"L-infinity norm {norm} exceeds bound {bound}",
+            )
+
+        return ProofResult(
+            status=ProofStatus.SUCCESS,
+            proof_type=ProofType.COMPOSITE,
+            proof_data={
+                "rule_type": "linf_norm_bound",
+                "bound": bound,
+                "norm": norm,
+                "verified": True,
+            },
+            metadata={"tolerance": TOLERANCE},
+        )
+
+
 # 规则类型到证明生成器的映射
 RULE_PROOF_GENERATORS: Dict[RuleType, RuleProofGenerator] = {
     RuleType.SUM_EQUALS: SumEqualsProofGenerator(),
+    RuleType.WEIGHTED_SUM: WeightedSumProofGenerator(),
     RuleType.COORDINATE_ZERO: CoordinateZeroProofGenerator(),
     RuleType.COORDINATE_EQUALS: CoordinateEqualsProofGenerator(),
-    # 更多规则类型的生成器可以在这里添加
+    RuleType.COORDINATE_IN_RANGE: CoordinateInRangeProofGenerator(),
+    RuleType.COORDINATE_BINARY: CoordinateBinaryProofGenerator(),
+    RuleType.ALL_IN_RANGE: AllInRangeProofGenerator(),
+    RuleType.ALL_BINARY: AllBinaryProofGenerator(),
+    RuleType.ALL_NON_NEGATIVE: AllNonNegativeProofGenerator(),
+    RuleType.INNER_PRODUCT: InnerProductProofGenerator(),
+    RuleType.L1_NORM_BOUND: L1NormBoundProofGenerator(),
+    RuleType.L2_NORM_BOUND: L2NormBoundProofGenerator(),
+    RuleType.LINF_NORM_BOUND: LinfNormBoundProofGenerator(),
 }
 
 
